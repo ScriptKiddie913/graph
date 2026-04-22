@@ -15,6 +15,8 @@ import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { fileURLToPath } from "url";
 
 dotenv.config();
@@ -32,6 +34,10 @@ const CHAT_ID = process.env.CHAT_ID;
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const PORT = process.env.PORT || 3001;
 const MAX_NODES = parseInt(process.env.MAX_NODES || "500000");
+const NO_STORE_MODE = String(process.env.NO_STORE_MODE || "false").toLowerCase() === "true";
+const TELETHON_MODE = String(process.env.TELETHON_MODE || "false").toLowerCase() === "true";
+const TELETHON_PYTHON = process.env.TELETHON_PYTHON || "python3";
+const execFileAsync = promisify(execFile);
 
 if (!BOT_TOKEN) {
   console.warn("⚠️  BOT_TOKEN not set — Telegram sync disabled");
@@ -118,6 +124,12 @@ function evictOldest(count) {
     nodeMap.delete(id);
   }
   console.log(`♻️  Evicted ${toRemove.length} old nodes (LRU)`);
+}
+
+function clearGraph() {
+  nodeMap.clear();
+  adjacency.clear();
+  insertOrder.length = 0;
 }
 
 // ===== PROCESS TELEGRAM MESSAGE =====
@@ -375,6 +387,87 @@ async function pollNewUpdates() {
   }
 }
 
+async function rebuildGraphFromTelethonSnapshot() {
+  clearGraph();
+  const scriptPath = path.resolve(__dirname, "telethon_fetch.py");
+
+  const { stdout, stderr } = await execFileAsync(
+    TELETHON_PYTHON,
+    [scriptPath],
+    {
+      env: process.env,
+      timeout: 180000,
+      maxBuffer: 30 * 1024 * 1024,
+    }
+  );
+
+  if (stderr && stderr.trim()) {
+    console.warn(`telethon_fetch.py warnings: ${stderr.trim()}`);
+  }
+
+  let messages = [];
+  try {
+    messages = JSON.parse(stdout || "[]");
+  } catch {
+    throw new Error("Failed to parse Telethon output as JSON");
+  }
+
+  for (const msg of messages) {
+    if (msg?.text) {
+      tryParseAndProcess(msg.text);
+    }
+  }
+}
+
+/**
+ * NO_STORE_MODE path:
+ * Rebuild graph from Telegram updates for each request.
+ * Does not persist offset/state between requests.
+ */
+async function rebuildGraphFromTelegramSnapshot() {
+  if (TELETHON_MODE) {
+    await rebuildGraphFromTelethonSnapshot();
+    return;
+  }
+
+  if (!BOT_TOKEN) return;
+
+  clearGraph();
+
+  let offset = 0;
+  let loops = 0;
+  const MAX_LOOPS = 200; // safety cap (200 * 100 updates max scanned)
+
+  while (loops < MAX_LOOPS) {
+    loops++;
+    const res = await axios.get(`${TELEGRAM_API}/getUpdates`, {
+      params: {
+        offset,
+        limit: 100,
+        timeout: 0,
+        allowed_updates: JSON.stringify(["message", "channel_post"]),
+      },
+      timeout: 30000,
+    });
+
+    const updates = res.data?.result || [];
+    if (updates.length === 0) break;
+
+    for (const update of updates) {
+      const text =
+        update.message?.text ||
+        update.channel_post?.text ||
+        update.edited_message?.text;
+
+      if (text) tryParseAndProcess(text);
+      offset = update.update_id + 1;
+    }
+
+    if (updates.length < 100) break;
+    await sleep(80);
+  }
+}
+
 function countEdges() {
   let total = 0;
   for (const set of adjacency.values()) {
@@ -504,39 +597,65 @@ function searchNodes(query, limit = 20) {
  * GET /graph?value=<seed>&depth=<1-5>
  * Returns subgraph centered on the seed value.
  */
-app.get("/graph", (req, res) => {
+app.get("/graph", async (req, res) => {
   const { value, depth = "3" } = req.query;
 
   if (!value) {
     return res.status(400).json({ error: "Missing ?value= parameter" });
   }
 
-  const maxDepth = Math.max(1, Math.min(5, parseInt(depth) || 3));
-  const graph = buildSubgraph(value.toLowerCase().trim(), maxDepth);
+  try {
+    if (NO_STORE_MODE) {
+      await rebuildGraphFromTelegramSnapshot();
+    }
+    const maxDepth = Math.max(1, Math.min(5, parseInt(depth) || 3));
+    const graph = buildSubgraph(value.toLowerCase().trim(), maxDepth);
 
-  res.json(graph);
+    res.json(graph);
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Failed to build graph" });
+  } finally {
+    if (NO_STORE_MODE) {
+      clearGraph();
+    }
+  }
 });
 
 /**
  * GET /search?q=<query>
  * Full-text search across all node values.
  */
-app.get("/search", (req, res) => {
+app.get("/search", async (req, res) => {
   const { q, limit = "20" } = req.query;
 
   if (!q) {
     return res.status(400).json({ error: "Missing ?q= parameter" });
   }
 
-  const results = searchNodes(q, parseInt(limit));
-  res.json({ results, total: results.length });
+  try {
+    if (NO_STORE_MODE) {
+      await rebuildGraphFromTelegramSnapshot();
+    }
+    const results = searchNodes(q, parseInt(limit));
+    res.json({ results, total: results.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Search failed" });
+  } finally {
+    if (NO_STORE_MODE) {
+      clearGraph();
+    }
+  }
 });
 
 /**
  * GET /stats
  * System health and graph statistics.
  */
-app.get("/stats", (req, res) => {
+app.get("/stats", async (req, res) => {
+  try {
+    if (NO_STORE_MODE) {
+      await rebuildGraphFromTelegramSnapshot();
+    }
   const memUsage = process.memoryUsage();
 
   res.json({
@@ -559,6 +678,13 @@ app.get("/stats", (req, res) => {
     },
     uptime: Math.round(process.uptime()),
   });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Stats failed" });
+  } finally {
+    if (NO_STORE_MODE) {
+      clearGraph();
+    }
+  }
 });
 
 /**
@@ -566,6 +692,10 @@ app.get("/stats", (req, res) => {
  * Force a full re-sync from Telegram.
  */
 app.post("/sync", async (req, res) => {
+  if (NO_STORE_MODE) {
+    return res.json({ message: "NO_STORE_MODE enabled: data is fetched on-demand from Telegram", syncing: false });
+  }
+
   if (!BOT_TOKEN) {
     return res.status(400).json({ error: "BOT_TOKEN not configured" });
   }
@@ -582,6 +712,10 @@ app.post("/sync", async (req, res) => {
  * Forward all group messages here as they arrive.
  */
 app.post("/webhook", (req, res) => {
+  if (NO_STORE_MODE) {
+    return res.sendStatus(200);
+  }
+
   const update = req.body;
 
   const text =
@@ -638,6 +772,7 @@ app.get("/health", (req, res) => {
     status: "running",
     nodes: nodeMap.size,
     synced: isSynced,
+    noStoreMode: NO_STORE_MODE,
   });
 });
 
@@ -668,7 +803,7 @@ app.listen(PORT, async () => {
   console.log(`💾 Memory limit: ~500MB (Render free tier)\n`);
 
   // Start Telegram sync on boot
-  if (BOT_TOKEN) {
+  if (BOT_TOKEN && !NO_STORE_MODE) {
     // Small delay to let server fully initialize
     await sleep(500);
     syncFromTelegram().catch(console.error);
@@ -680,7 +815,11 @@ app.listen(PORT, async () => {
       }
     }, 60_000);
   } else {
-    console.log("⚠️  No BOT_TOKEN — running without Telegram sync");
+    if (NO_STORE_MODE) {
+      console.log("🛡️  NO_STORE_MODE enabled — no persistent in-memory cache");
+    } else {
+      console.log("⚠️  No BOT_TOKEN — running without Telegram sync");
+    }
     isSynced = true;
   }
 });

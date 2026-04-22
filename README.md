@@ -105,6 +105,32 @@ Set this environment variable in Render:
 - Bot must be admin in your target channel/group
 - If using groups and reading all messages, disable bot privacy in BotFather
 
+### Telethon mode (optional, for channel history access)
+
+If you want the backend to fetch from Telegram channel history via Telethon:
+
+1. Install Telethon in runtime environment:
+   - `pip install telethon`
+2. Set backend env vars:
+   - `NO_STORE_MODE=true`
+   - `TELETHON_MODE=true`
+   - `TELETHON_PYTHON=python3`
+   - `TG_API_ID=<telegram_api_id>`
+   - `TG_API_HASH=<telegram_api_hash>`
+   - `TG_CHANNEL=@your_channel_username_or_id`
+   - `TG_SESSION=graph_intel`
+   - `TG_STRING_SESSION=<generated_string_session>` (recommended on Render)
+   - `TG_LIMIT=50000`
+
+In this mode, API requests can rebuild graph from channel history on demand.
+
+Generate `TG_STRING_SESSION` locally once:
+
+- Install telethon: `python3 -m pip install telethon`
+- Export `TG_API_ID` and `TG_API_HASH`
+- Run: `python3 backend/generate_string_session.py`
+- Copy printed value into Render env var `TG_STRING_SESSION`
+
 ### 4) Quick post-deploy checks
 
 - Backend health: `GET /`
