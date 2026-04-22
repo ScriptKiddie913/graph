@@ -1,0 +1,16 @@
+{
+  "name": "graph-intel-uploader",
+  "version": "1.0.0",
+  "description": "CSV to Telegram uploader for Graph Intelligence System",
+  "type": "module",
+  "main": "upload.js",
+  "scripts": {
+    "start": "node upload.js",
+    "watch": "node upload.js --watch"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "chokidar": "^3.5.3"
+  }
+}
