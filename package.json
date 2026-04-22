@@ -1,0 +1,10 @@
+{
+  "name": "graph-intel-monolith",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Single-service Graph Intel deployment",
+  "scripts": {
+    "build": "npm --prefix backend install && npm --prefix frontend install && npm --prefix frontend run build",
+    "start": "npm --prefix backend start"
+  }
+}

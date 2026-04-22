@@ -12,15 +12,17 @@ services:
     plan: free  # 512MB RAM, 0.1 CPU (free tier)
     envVars:
       - key: BOT_TOKEN
-        sync: false  # Set manually in Render dashboard
+        sync: false
       - key: CHAT_ID
-        sync: false  # Set manually in Render dashboard
+        sync: false
       - key: PORT
         value: "3001"
       - key: MAX_NODES
-        value: "400000"  # Leave headroom within 500MB
+        value: "400000"
       - key: NODE_ENV
         value: production
+      - key: WEBHOOK_URL
+        sync: false
     healthCheckPath: /
     autoDeploy: true
 
@@ -33,11 +35,7 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: graph-intel-backend
-          property: host
-          prefix: "https://"
+        sync: false
     headers:
       - path: /*
         name: Cache-Control

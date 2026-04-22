@@ -14,12 +14,18 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FRONTEND_DIST = path.resolve(__dirname, "../frontend/dist");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
@@ -135,14 +141,109 @@ function processRecord(data) {
   }
 }
 
-function tryParseAndProcess(text) {
-  if (!text || !text.startsWith("{")) return;
-  try {
-    const data = JSON.parse(text);
-    processRecord(data);
-  } catch {
-    // Not JSON, ignore
+function normalizeRawValue(value) {
+  if (value === null || value === undefined) return null;
+  let v = String(value).trim().replace(/^["'`]|["'`]$/g, "");
+  if (!v) return null;
+
+  const lower = v.toLowerCase();
+  if (["null", "<blank>", "-----", "none", "n/a", "na", "-"].includes(lower)) {
+    return null;
   }
+
+  // Phone-like values -> keep digits only
+  if (/^\+?[\d\s\-().]{7,20}$/.test(v)) {
+    const digits = v.replace(/\D/g, "");
+    if (digits.length >= 7) return digits;
+  }
+
+  // Collapse extra whitespace, preserve unicode text
+  v = v.replace(/\s+/g, " ").trim().toLowerCase();
+  if (v.length < 2 && !/^\d+$/.test(v)) return null;
+  return v;
+}
+
+function splitRawLine(line) {
+  const clean = line.trim();
+  if (!clean) return [];
+
+  // host:user:password style dumps
+  if (clean.includes(":") && (clean.match(/:/g) || []).length >= 2 && !clean.includes(",") && !clean.includes("\t")) {
+    const parts = clean.split(":").map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 3) return parts;
+  }
+
+  // key: value style
+  if (clean.includes(":") && !clean.includes(",") && !clean.includes("\t")) {
+    const idx = clean.indexOf(":");
+    return [clean.slice(0, idx).trim(), clean.slice(idx + 1).trim()];
+  }
+
+  // tab-delimited
+  if (clean.includes("\t")) {
+    return clean.split("\t").map((p) => p.trim());
+  }
+
+  // csv-like
+  if (clean.includes(",")) {
+    return clean.split(",").map((p) => p.trim());
+  }
+
+  // 2+ spaces separated report line
+  if (/\s{2,}/.test(clean)) {
+    return clean.split(/\s{2,}/).map((p) => p.trim());
+  }
+
+  return [clean];
+}
+
+function processRawLine(line) {
+  const parts = splitRawLine(line);
+  if (!parts.length) return;
+
+  const values = [...new Set(parts.map(normalizeRawValue).filter(Boolean))].slice(0, 40);
+  if (values.length < 2) return;
+
+  for (const value of values) {
+    processRecord({
+      type: "entity",
+      value,
+      links: values
+        .filter((v) => v !== value)
+        .slice(0, 25)
+        .map((v) => ({ type: "entity", value: v })),
+    });
+  }
+}
+
+function processRawTextBlock(text) {
+  if (!text) return;
+  const lines = String(text)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    processRawLine(line);
+  }
+}
+
+function tryParseAndProcess(text) {
+  if (!text) return;
+
+  // Preferred format: uploader JSON
+  if (text.startsWith("{")) {
+    try {
+      const data = JSON.parse(text);
+      processRecord(data);
+      return;
+    } catch {
+      // fall through to raw parser
+    }
+  }
+
+  // Fallback: raw text record parsing (line-by-line)
+  processRawTextBlock(text);
 }
 
 // ============================================================
@@ -512,16 +613,28 @@ app.get("/webhook/set", async (req, res) => {
 });
 
 /**
- * GET /
+ * GET /health
  * Health check
  */
-app.get("/", (req, res) => {
+app.get("/health", (req, res) => {
   res.json({
     service: "Graph Intel Backend",
     status: "running",
     nodes: nodeMap.size,
     synced: isSynced,
   });
+});
+
+// ============================================================
+// 🌐 SERVE FRONTEND (single-service Render deployment)
+// ============================================================
+app.use(express.static(FRONTEND_DIST));
+app.get("*", (req, res, next) => {
+  // Keep API routes untouched
+  if (req.path.startsWith("/graph") || req.path.startsWith("/search") || req.path.startsWith("/stats") || req.path.startsWith("/sync") || req.path.startsWith("/webhook")) {
+    return next();
+  }
+  return res.sendFile(path.join(FRONTEND_DIST, "index.html"));
 });
 
 // ============================================================

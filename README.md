@@ -64,3 +64,49 @@ graph-intel/
 - `GET /stats`
 - `POST /webhook`
 - `POST /sync`
+
+## Render Deployment (Backend + Frontend)
+
+Use `render.yaml` (Blueprint deploy) or create services manually.
+
+### 1) Backend service (`backend`, Web Service)
+
+- Runtime: Node
+- Root Directory: `backend`
+- Build Command: `npm install`
+- Start Command: `npm start`
+
+Set these environment variables in Render:
+
+- `BOT_TOKEN` = your Telegram bot token
+- `CHAT_ID` = your Telegram channel/group id (example: `-1003799313385`)
+- `PORT` = `3001`
+- `MAX_NODES` = `400000`
+- `NODE_ENV` = `production`
+- `WEBHOOK_URL` = `https://<your-backend-service>.onrender.com`
+
+After first deploy, set webhook once:
+
+- Open: `https://<your-backend-service>.onrender.com/webhook/set?url=https://<your-backend-service>.onrender.com`
+
+### 2) Frontend service (`frontend`, Static Site)
+
+- Runtime: Static Site
+- Root Directory: `frontend`
+- Build Command: `npm install && npm run build`
+- Publish Directory: `dist`
+
+Set this environment variable in Render:
+
+- `VITE_API_URL` = `https://<your-backend-service>.onrender.com`
+
+### 3) Telegram requirements
+
+- Bot must be admin in your target channel/group
+- If using groups and reading all messages, disable bot privacy in BotFather
+
+### 4) Quick post-deploy checks
+
+- Backend health: `GET /`
+- Stats: `GET /stats`
+- Graph query: `GET /graph?value=<known_value>&depth=2`
