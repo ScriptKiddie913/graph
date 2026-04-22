@@ -179,6 +179,22 @@ function splitRawLine(line) {
     return [clean.slice(0, idx).trim(), clean.slice(idx + 1).trim()];
   }
 
+  // mixed ":" + "," lines (e.g. "name : address,5")
+  // First split CSV segments, then split each segment by ":" to keep all entities.
+  if (clean.includes(":") && clean.includes(",")) {
+    const csvParts = clean.split(",").map((p) => p.trim()).filter(Boolean);
+    const mixed = [];
+    for (const part of csvParts) {
+      if (part.includes(":")) {
+        const sub = part.split(":").map((p) => p.trim()).filter(Boolean);
+        mixed.push(...sub);
+      } else {
+        mixed.push(part);
+      }
+    }
+    if (mixed.length) return mixed;
+  }
+
   // tab-delimited
   if (clean.includes("\t")) {
     return clean.split("\t").map((p) => p.trim());
