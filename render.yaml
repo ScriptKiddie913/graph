@@ -7,7 +7,7 @@ services:
     name: graph-intel-backend
     runtime: node
     rootDir: backend
-    buildCommand: npm install
+    buildCommand: pip install -r requirements.txt && npm install
     startCommand: npm start
     plan: free  # 512MB RAM, 0.1 CPU (free tier)
     envVars:
