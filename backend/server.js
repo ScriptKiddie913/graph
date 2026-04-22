@@ -391,15 +391,34 @@ async function rebuildGraphFromTelethonSnapshot() {
   clearGraph();
   const scriptPath = path.resolve(__dirname, "telethon_fetch.py");
 
-  const { stdout, stderr } = await execFileAsync(
-    TELETHON_PYTHON,
-    [scriptPath],
-    {
-      env: process.env,
-      timeout: 180000,
-      maxBuffer: 30 * 1024 * 1024,
+  let stdout, stderr;
+  try {
+    ({ stdout, stderr } = await execFileAsync(
+      TELETHON_PYTHON,
+      [scriptPath],
+      {
+        env: process.env,
+        timeout: 180000,
+        maxBuffer: 30 * 1024 * 1024,
+      }
+    ));
+  } catch (err) {
+    // execFileAsync throws when the process exits with a non-zero code.
+    // telethon_fetch.py writes a JSON error object to stdout in that case —
+    // try to surface it instead of the generic "Command failed" message.
+    const raw = (err.stdout || "").trim();
+    let detail = err.message;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        detail = parsed.message || parsed.error || detail;
+      } catch { /* stdout is not JSON — keep original message */ }
     }
-  );
+    if (err.stderr && err.stderr.trim()) {
+      console.warn(`telethon_fetch.py stderr: ${err.stderr.trim()}`);
+    }
+    throw new Error(`Telethon fetch failed: ${detail}`);
+  }
 
   if (stderr && stderr.trim()) {
     console.warn(`telethon_fetch.py warnings: ${stderr.trim()}`);
@@ -410,6 +429,11 @@ async function rebuildGraphFromTelethonSnapshot() {
     messages = JSON.parse(stdout || "[]");
   } catch {
     throw new Error("Failed to parse Telethon output as JSON");
+  }
+
+  if (!Array.isArray(messages)) {
+    const detail = messages.message || messages.error || "Unexpected response from telethon_fetch.py";
+    throw new Error(`Telethon fetch failed: ${detail}`);
   }
 
   for (const msg of messages) {
