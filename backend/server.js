@@ -299,6 +299,25 @@ async function syncFromTelegram() {
   isSyncing = true;
   console.log("🔄 Starting Telegram sync...");
 
+  // Check if a webhook is active — getUpdates won't work alongside a webhook
+  try {
+    const info = await axios.get(`${TELEGRAM_API}/getWebhookInfo`, { timeout: 5000 });
+    const activeWebhook = info.data?.result?.url;
+    if (activeWebhook) {
+      console.warn(`⚠️  Active webhook detected (${activeWebhook}). getUpdates is disabled while a webhook is set.`);
+      console.warn("    • New messages will arrive via the /webhook endpoint.");
+      console.warn("    • For full channel history: set TELETHON_MODE=true with TG_API_ID / TG_API_HASH / TG_CHANNEL / TG_STRING_SESSION.");
+      console.warn("    • To switch to polling: call GET /webhook/delete, then POST /sync.");
+      isSynced = true;
+      lastSyncTime = new Date();
+      isSyncing = false;
+      return;
+    }
+  } catch (err) {
+    // Ignore webhook check errors and proceed with getUpdates
+    console.warn(`⚠️  Could not check webhook status: ${err.message} — proceeding with getUpdates.`);
+  }
+
   let offset = 0;
   let fetched = 0;
   let processed = 0;
@@ -346,8 +365,19 @@ async function syncFromTelegram() {
 
     console.log(`✅ Sync complete: ${fetched} updates, ${processed} records parsed`);
     console.log(`   Graph: ${nodeMap.size} nodes, ${countEdges()} edges`);
+
+    if (fetched === 0) {
+      console.warn("⚠️  No Telegram updates received. Possible reasons:");
+      console.warn("    • Bot is not an admin in the channel — only admin bots receive channel_post updates.");
+      console.warn("    • All prior updates were already consumed — getUpdates only returns unread updates.");
+      console.warn("    • For full channel history: set TELETHON_MODE=true with TG_API_ID / TG_API_HASH / TG_CHANNEL / TG_STRING_SESSION.");
+    }
   } catch (err) {
     console.error("❌ Telegram sync failed:", err.message);
+    const desc = err.response?.data?.description || "";
+    if (err.response?.status === 409 || desc.toLowerCase().includes("webhook")) {
+      console.error("    Hint: A webhook appears to be active. Call GET /webhook/delete to remove it, then POST /sync.");
+    }
   } finally {
     isSyncing = false;
   }
@@ -388,30 +418,47 @@ async function pollNewUpdates() {
 }
 
 async function rebuildGraphFromTelethonSnapshot() {
-  clearGraph();
   const scriptPath = path.resolve(__dirname, "telethon_fetch.py");
 
-  const { stdout, stderr } = await execFileAsync(
-    TELETHON_PYTHON,
-    [scriptPath],
-    {
-      env: process.env,
-      timeout: 180000,
-      maxBuffer: 30 * 1024 * 1024,
-    }
-  );
+  let stdout, stderr;
+  try {
+    ({ stdout, stderr } = await execFileAsync(
+      TELETHON_PYTHON,
+      [scriptPath],
+      {
+        env: process.env,
+        timeout: 180000,
+        maxBuffer: 30 * 1024 * 1024,
+      }
+    ));
+  } catch (err) {
+    // execFileAsync rejects on non-zero exit code; err.stdout contains the Python JSON error
+    let detail = String(err.stdout || err.stderr || err.message || "").trim();
+    try {
+      const parsed = JSON.parse(err.stdout || "{}");
+      detail = parsed.message || parsed.error || detail;
+    } catch { /* ignore */ }
+    throw new Error(`Telethon fetch failed: ${detail}`);
+  }
 
   if (stderr && stderr.trim()) {
     console.warn(`telethon_fetch.py warnings: ${stderr.trim()}`);
   }
 
-  let messages = [];
+  let messages;
   try {
     messages = JSON.parse(stdout || "[]");
   } catch {
     throw new Error("Failed to parse Telethon output as JSON");
   }
 
+  if (!Array.isArray(messages)) {
+    const detail = messages?.message || messages?.error || "unexpected output format";
+    throw new Error(`Telethon error: ${detail}`);
+  }
+
+  // Only clear the graph after a successful fetch so a failure never leaves an empty graph
+  clearGraph();
   for (const msg of messages) {
     if (msg?.text) {
       tryParseAndProcess(msg.text);
@@ -432,11 +479,10 @@ async function rebuildGraphFromTelegramSnapshot() {
 
   if (!BOT_TOKEN) return;
 
-  clearGraph();
-
   let offset = 0;
   let loops = 0;
   const MAX_LOOPS = 200; // safety cap (200 * 100 updates max scanned)
+  const collected = []; // collect texts before clearing graph
 
   while (loops < MAX_LOOPS) {
     loops++;
@@ -459,12 +505,18 @@ async function rebuildGraphFromTelegramSnapshot() {
         update.channel_post?.text ||
         update.edited_message?.text;
 
-      if (text) tryParseAndProcess(text);
+      if (text) collected.push(text);
       offset = update.update_id + 1;
     }
 
     if (updates.length < 100) break;
     await sleep(80);
+  }
+
+  // Only clear the graph after a successful fetch so a failure never leaves an empty graph
+  clearGraph();
+  for (const text of collected) {
+    tryParseAndProcess(text);
   }
 }
 
@@ -754,6 +806,26 @@ app.get("/webhook/set", async (req, res) => {
     const response = await axios.post(`${TELEGRAM_API}/setWebhook`, {
       url: `${webhookUrl}/webhook`,
       allowed_updates: ["message", "channel_post"],
+      drop_pending_updates: false,
+    });
+    res.json({ success: true, telegram: response.data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /webhook/delete
+ * Removes the active Telegram webhook so getUpdates polling can be used.
+ * After deleting the webhook, call POST /sync to pull pending updates.
+ */
+app.get("/webhook/delete", async (req, res) => {
+  if (!BOT_TOKEN) {
+    return res.status(400).json({ error: "BOT_TOKEN not configured" });
+  }
+
+  try {
+    const response = await axios.post(`${TELEGRAM_API}/deleteWebhook`, {
       drop_pending_updates: false,
     });
     res.json({ success: true, telegram: response.data });
