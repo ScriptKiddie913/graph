@@ -6,6 +6,12 @@ import sys
 
 try:
     from telethon import TelegramClient
+    from telethon.errors import (
+        ChannelInvalidError,
+        ChannelPrivateError,
+        UsernameInvalidError,
+        UsernameNotOccupiedError,
+    )
     from telethon.sessions import StringSession
 except Exception as exc:
     print(
@@ -63,6 +69,36 @@ async def main():
             text = msg.message or ""
             if text and text.strip():
                 out.append({"id": msg.id, "text": text})
+    except (UsernameNotOccupiedError, UsernameInvalidError):
+        print(
+            json.dumps(
+                {
+                    "error": "channel_not_found",
+                    "message": f"Telegram channel '{channel}' does not exist or the username is not in use.",
+                }
+            )
+        )
+        return 1
+    except ChannelPrivateError:
+        print(
+            json.dumps(
+                {
+                    "error": "channel_private",
+                    "message": f"Telegram channel '{channel}' is private or the account has no access.",
+                }
+            )
+        )
+        return 1
+    except ChannelInvalidError:
+        print(
+            json.dumps(
+                {
+                    "error": "channel_invalid",
+                    "message": f"Telegram channel '{channel}' is invalid.",
+                }
+            )
+        )
+        return 1
     finally:
         await client.disconnect()
 
