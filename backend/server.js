@@ -18,6 +18,8 @@ import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { fileURLToPath } from "url";
+import { classifyEntity, enrichEntity } from "./entityClassifier.js";
+import { getLinkMeta, buildLinksFromRow } from "./entityLinker.js";
 
 dotenv.config();
 
@@ -48,23 +50,28 @@ if (!BOT_TOKEN) {
 // ============================================================
 
 /**
- * nodeMap: Map<nodeId, { id, value, type, connections: number }>
+ * nodeMap: Map<nodeId, { id, value, type, category, icon, color, connections: number }>
  *   - nodeId = "entity:<normalizedValue>"
+ *   - type/category/icon/color come from entityClassifier
  *   - stored as flat objects (not classes) for minimal overhead
- * 
+ *
  * adjacency: Map<nodeId, Set<nodeId>>
  *   - adjacency list (NOT matrix) — sparse, O(1) neighbor lookup
  *   - bidirectional edges stored both ways
- * 
+ *
+ * edgeMetaMap: Map<edgeKey, { weight, label, category }>
+ *   - stores rich edge metadata keyed by canonical "idA~~idB" string
+ *
  * Memory estimate:
- *   100k nodes × ~150 bytes ≈ 15MB
- *   500k nodes × ~150 bytes ≈ 75MB
+ *   100k nodes × ~200 bytes ≈ 20MB
+ *   500k nodes × ~200 bytes ≈ 100MB
  *   plus adjacency sets ≈ similar again
- *   Total 500k nodes ≈ ~150MB — well within 500MB
+ *   Total 500k nodes ≈ ~200MB — well within 500MB
  */
-const nodeMap = new Map();    // nodeId → node object
-const adjacency = new Map();  // nodeId → Set<nodeId>
-const insertOrder = [];       // LRU eviction queue
+const nodeMap = new Map();       // nodeId → node object
+const adjacency = new Map();     // nodeId → Set<nodeId>
+const edgeMetaMap = new Map();   // edgeKey → { weight, label, category }
+const insertOrder = [];          // LRU eviction queue
 
 // ===== NODE OPERATIONS =====
 
@@ -84,14 +91,23 @@ function addNode(value) {
     evictOldest(1000);
   }
 
-  const node = { id, value, type: "entity", connections: 0 };
+  const enriched = enrichEntity(value);
+  const node = {
+    id,
+    value,
+    type: enriched.type,
+    category: enriched.category,
+    icon: enriched.icon,
+    color: enriched.color,
+    connections: 0,
+  };
   nodeMap.set(id, node);
   insertOrder.push(id);
 
   return node;
 }
 
-function addEdge(idA, idB) {
+function addEdge(idA, idB, meta) {
   if (idA === idB) return;
 
   if (!adjacency.has(idA)) adjacency.set(idA, new Set());
@@ -107,17 +123,27 @@ function addEdge(idA, idB) {
     const nodeB = nodeMap.get(idB);
     if (nodeA) nodeA.connections++;
     if (nodeB) nodeB.connections++;
+
+    // Store edge metadata
+    if (meta) {
+      const edgeKey = idA < idB ? `${idA}~~${idB}` : `${idB}~~${idA}`;
+      if (!edgeMetaMap.has(edgeKey)) {
+        edgeMetaMap.set(edgeKey, meta);
+      }
+    }
   }
 }
 
 function evictOldest(count) {
   const toRemove = insertOrder.splice(0, count);
   for (const id of toRemove) {
-    // Clean up adjacency
+    // Clean up adjacency and edge metadata
     const neighbors = adjacency.get(id);
     if (neighbors) {
       for (const nId of neighbors) {
         adjacency.get(nId)?.delete(id);
+        const edgeKey = id < nId ? `${id}~~${nId}` : `${nId}~~${id}`;
+        edgeMetaMap.delete(edgeKey);
       }
     }
     adjacency.delete(id);
@@ -129,6 +155,7 @@ function evictOldest(count) {
 function clearGraph() {
   nodeMap.clear();
   adjacency.clear();
+  edgeMetaMap.clear();
   insertOrder.length = 0;
 }
 
@@ -145,8 +172,10 @@ function processRecord(data) {
 
     for (const link of data.links || []) {
       if (!link?.value) continue;
-      const childNode = addNode(link.value.trim());
-      addEdge(mainNode.id, childNode.id);
+      const linkedValue = link.value.trim();
+      const childNode = addNode(linkedValue);
+      const meta = getLinkMeta(mainNode.type, childNode.type);
+      addEdge(mainNode.id, childNode.id, meta);
     }
   } catch (err) {
     // Malformed records are silently ignored
@@ -232,15 +261,19 @@ function processRawLine(line) {
   const values = [...new Set(parts.map(normalizeRawValue).filter(Boolean))].slice(0, 40);
   if (values.length < 2) return;
 
+  // Ensure all nodes exist
   for (const value of values) {
-    processRecord({
-      type: "entity",
-      value,
-      links: values
-        .filter((v) => v !== value)
-        .slice(0, 25)
-        .map((v) => ({ type: "entity", value: v })),
-    });
+    addNode(value);
+  }
+
+  // Use smart linker — reuse types already stored in nodeMap to avoid re-classifying
+  const getType = (v) => nodeMap.get(makeId(v))?.type || classifyEntity(v);
+  const links = buildLinksFromRow(values, getType);
+  for (const link of links) {
+    const fromId = makeId(link.from.value);
+    const toId = makeId(link.to.value);
+    const meta = getLinkMeta(link.from.type, link.to.type);
+    addEdge(fromId, toId, meta);
   }
 }
 
@@ -568,10 +601,14 @@ function buildSubgraph(seedValue, maxDepth = 3, maxResultNodes = 500) {
         id < nId ? `${id}~~${nId}` : `${nId}~~${id}`;
 
       if (!resultEdges.has(edgeKey)) {
+        const meta = edgeMetaMap.get(edgeKey) || { weight: 3, label: "linked to", category: "generic" };
         resultEdges.set(edgeKey, {
           id: edgeKey,
           source: id,
           target: nId,
+          weight: meta.weight,
+          label: meta.label,
+          category: meta.category,
         });
       }
 
