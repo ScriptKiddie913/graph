@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useState, useCallback } from "react";
+
+const API = import.meta.env.VITE_API_URL || "";
 
 const TYPE_ACTIONS = {
   facebook:    (v) => ({ label: "Open Profile", url: v.startsWith("http") ? v : `https://facebook.com/${v}` }),
@@ -27,6 +29,67 @@ const TYPE_ACTIONS = {
 };
 
 export default function NodePanel({ node, onExpand, onClose }) {
+  const [holeheOpen, setHoleheOpen] = useState(false);
+  const [holeheSites, setHoleheSites] = useState(null);
+  const [holeheLoading, setHoleheLoading] = useState(false);
+  const [holeheError, setHoleheError] = useState(null);
+
+  const [linkedinOpen, setLinkedinOpen] = useState(false);
+  const [linkedinResults, setLinkedinResults] = useState(null);
+  const [linkedinLoading, setLinkedinLoading] = useState(false);
+  const [linkedinError, setLinkedinError] = useState(null);
+
+  const isEmail = node?.type === "email" || node?.type === "google_account";
+  const isName = node?.type === "name";
+
+  const scanHolehe = useCallback(async () => {
+    if (!node) return;
+    if (holeheSites !== null) {
+      setHoleheOpen((o) => !o);
+      return;
+    }
+    setHoleheLoading(true);
+    setHoleheError(null);
+    setHoleheOpen(true);
+    try {
+      const res = await fetch(`${API}/holehe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: node.value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Scan failed");
+      setHoleheSites(data.found || []);
+    } catch (err) {
+      setHoleheError(err.message);
+      setHoleheSites([]);
+    } finally {
+      setHoleheLoading(false);
+    }
+  }, [node, holeheSites]);
+
+  const searchLinkedin = useCallback(async () => {
+    if (!node) return;
+    if (linkedinResults !== null) {
+      setLinkedinOpen((o) => !o);
+      return;
+    }
+    setLinkedinLoading(true);
+    setLinkedinError(null);
+    setLinkedinOpen(true);
+    try {
+      const res = await fetch(`${API}/linkedin-search?name=${encodeURIComponent(node.value)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Search failed");
+      setLinkedinResults(data.results || []);
+    } catch (err) {
+      setLinkedinError(err.message);
+      setLinkedinResults([]);
+    } finally {
+      setLinkedinLoading(false);
+    }
+  }, [node, linkedinResults]);
+
   if (!node) return null;
 
   const action = node.type && TYPE_ACTIONS[node.type]
@@ -145,6 +208,196 @@ export default function NodePanel({ node, onExpand, onClose }) {
         >
           🔗 {action.label}
         </a>
+      )}
+
+      {/* Holehe email scan */}
+      {isEmail && (
+        <div style={{ marginBottom: 8 }}>
+          <button
+            onClick={scanHolehe}
+            disabled={holeheLoading}
+            style={{
+              width: "100%",
+              background: "rgba(255,157,0,0.12)",
+              border: "1px solid rgba(255,157,0,0.4)",
+              borderRadius: 8,
+              padding: "8px 0",
+              color: "#ff9d00",
+              fontSize: 11,
+              fontFamily: "'Space Mono', monospace",
+              fontWeight: "bold",
+              cursor: holeheLoading ? "default" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              opacity: holeheLoading ? 0.7 : 1,
+              transition: "opacity 0.2s",
+            }}
+          >
+            {holeheLoading ? (
+              <>
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    border: "2px solid #ff9d00",
+                    borderTopColor: "transparent",
+                    animation: "spin 0.7s linear infinite",
+                  }}
+                />
+                Scanning…
+              </>
+            ) : (
+              <>🔍 {holeheOpen && holeheSites !== null ? "▲" : "▼"} Account Scanner</>
+            )}
+          </button>
+
+          {holeheOpen && (
+            <div
+              style={{
+                marginTop: 4,
+                background: "rgba(255,157,0,0.07)",
+                border: "1px solid rgba(255,157,0,0.25)",
+                borderRadius: 8,
+                padding: "8px 10px",
+                maxHeight: 180,
+                overflowY: "auto",
+              }}
+            >
+              {holeheError ? (
+                <div style={{ fontSize: 11, color: "#ff6b9d", fontFamily: "monospace" }}>
+                  ⚠️ {holeheError}
+                </div>
+              ) : holeheSites && holeheSites.length === 0 ? (
+                <div style={{ fontSize: 11, color: "rgba(224,216,255,0.4)", fontFamily: "monospace" }}>
+                  No accounts found
+                </div>
+              ) : (
+                (holeheSites || []).map((site, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      fontSize: 11,
+                      color: "#ff9d00",
+                      fontFamily: "monospace",
+                      padding: "3px 0",
+                      borderBottom: i < holeheSites.length - 1 ? "1px solid rgba(255,157,0,0.1)" : "none",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ color: "#00ff9d" }}>✔</span> {site}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* LinkedIn name search */}
+      {isName && (
+        <div style={{ marginBottom: 8 }}>
+          <button
+            onClick={searchLinkedin}
+            disabled={linkedinLoading}
+            style={{
+              width: "100%",
+              background: "rgba(0,119,181,0.12)",
+              border: "1px solid rgba(0,119,181,0.45)",
+              borderRadius: 8,
+              padding: "8px 0",
+              color: "#0099d4",
+              fontSize: 11,
+              fontFamily: "'Space Mono', monospace",
+              fontWeight: "bold",
+              cursor: linkedinLoading ? "default" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              opacity: linkedinLoading ? 0.7 : 1,
+              transition: "opacity 0.2s",
+            }}
+          >
+            {linkedinLoading ? (
+              <>
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    border: "2px solid #0099d4",
+                    borderTopColor: "transparent",
+                    animation: "spin 0.7s linear infinite",
+                  }}
+                />
+                Searching…
+              </>
+            ) : (
+              <>💼 {linkedinOpen && linkedinResults !== null ? "▲" : "▼"} LinkedIn Search</>
+            )}
+          </button>
+
+          {linkedinOpen && (
+            <div
+              style={{
+                marginTop: 4,
+                background: "rgba(0,119,181,0.07)",
+                border: "1px solid rgba(0,119,181,0.25)",
+                borderRadius: 8,
+                padding: "8px 10px",
+                maxHeight: 220,
+                overflowY: "auto",
+              }}
+            >
+              {linkedinError ? (
+                <div style={{ fontSize: 11, color: "#ff6b9d", fontFamily: "monospace" }}>
+                  ⚠️ {linkedinError}
+                </div>
+              ) : linkedinResults && linkedinResults.length === 0 ? (
+                <div style={{ fontSize: 11, color: "rgba(224,216,255,0.4)", fontFamily: "monospace" }}>
+                  No LinkedIn profiles found
+                </div>
+              ) : (
+                (linkedinResults || []).map((r, i) => (
+                  <a
+                    key={i}
+                    href={r.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "block",
+                      padding: "6px 0",
+                      borderBottom: i < linkedinResults.length - 1 ? "1px solid rgba(0,119,181,0.15)" : "none",
+                      textDecoration: "none",
+                    }}
+                  >
+                    <div style={{ fontSize: 11, color: "#0099d4", fontFamily: "monospace", fontWeight: "bold" }}>
+                      💼 {r.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: "rgba(224,216,255,0.5)",
+                        fontFamily: "monospace",
+                        marginTop: 2,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {r.snippet}
+                    </div>
+                  </a>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       <div style={{ display: "flex", gap: 8 }}>
