@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { useNodesState, useEdgesState, MarkerType } from "reactflow";
 import axios from "axios";
 
@@ -6,6 +6,7 @@ import SearchBar from "./components/SearchBar.jsx";
 import StatsBar from "./components/StatsBar.jsx";
 import GraphView from "./components/GraphView.jsx";
 import NodePanel from "./components/NodePanel.jsx";
+import TypeFilterPanel from "./components/TypeFilterPanel.jsx";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -57,6 +58,9 @@ function toReactFlowNodes(apiNodes, positions, seedId, onNodeClick) {
       label: n.value,
       isSeed: n.id === seedId,
       connections: n.connections || 0,
+      entityType: n.type || "unknown",
+      icon: n.icon,
+      color: n.color,
       onClick: () => onNodeClick(n),
     },
   }));
@@ -88,6 +92,41 @@ export default function App() {
   const [depthSetting, setDepthSetting] = useState(3);
   const [currentSeed, setCurrentSeed] = useState(null);
   const [history, setHistory] = useState([]);
+  const [activeTypeFilters, setActiveTypeFilters] = useState(new Set());
+
+  // ===== TYPE FILTER =====
+  const typeCounts = useMemo(() => {
+    const counts = {};
+    for (const n of nodes) {
+      const t = n.data?.entityType || "unknown";
+      counts[t] = (counts[t] || 0) + 1;
+    }
+    return counts;
+  }, [nodes]);
+
+  const displayNodes = useMemo(() => {
+    if (activeTypeFilters.size === 0) return nodes;
+    return nodes.filter((n) => n.data?.isSeed || activeTypeFilters.has(n.data?.entityType));
+  }, [nodes, activeTypeFilters]);
+
+  const displayEdges = useMemo(() => {
+    if (activeTypeFilters.size === 0) return edges;
+    const visibleIds = new Set(displayNodes.map((n) => n.id));
+    return edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+  }, [edges, displayNodes, activeTypeFilters]);
+
+  const handleToggleFilter = useCallback((type) => {
+    setActiveTypeFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }, []);
+
+  const handleClearFilters = useCallback(() => {
+    setActiveTypeFilters(new Set());
+  }, []);
 
   // ===== LOAD GRAPH =====
   const loadGraph = useCallback(
@@ -313,13 +352,23 @@ export default function App() {
       </div>
 
       <GraphView
-        nodes={nodes}
-        edges={edges}
+        nodes={displayNodes}
+        edges={displayEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onPaneClick={() => setSelectedNode(null)}
         topPadding={error ? 160 : 130}
       />
+
+      {/* ===== TYPE FILTER PANEL ===== */}
+      {nodes.length > 0 && (
+        <TypeFilterPanel
+          typeCounts={typeCounts}
+          activeFilters={activeTypeFilters}
+          onToggle={handleToggleFilter}
+          onClearAll={handleClearFilters}
+        />
+      )}
 
       {/* ===== EMPTY STATE ===== */}
       {nodes.length === 0 && !loading && (

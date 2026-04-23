@@ -1,7 +1,37 @@
 import React from "react";
 
+const TYPE_ACTIONS = {
+  facebook:    (v) => ({ label: "Open Profile", url: v.startsWith("http") ? v : `https://facebook.com/${v}` }),
+  instagram:   (v) => ({ label: "Open Profile", url: v.startsWith("http") ? v : `https://instagram.com/${v}` }),
+  twitter_x:   (v) => ({ label: "Open Profile", url: v.startsWith("http") ? v : `https://x.com/${v}` }),
+  telegram:    (v) => ({ label: "Open Telegram", url: v.startsWith("http") ? v : `https://t.me/${v.replace("@", "")}` }),
+  linkedin:    (v) => ({ label: "Open LinkedIn", url: v.startsWith("http") ? v : `https://linkedin.com/in/${v}` }),
+  tiktok:      (v) => ({ label: "Open TikTok", url: v.startsWith("http") ? v : `https://tiktok.com/@${v}` }),
+  snapchat:    (v) => ({ label: "Open Snapchat", url: v.startsWith("http") ? v : `https://snapchat.com/add/${v}` }),
+  discord:     (v) => ({ label: "Open Discord", url: v.startsWith("http") ? v : `https://discord.com/users/${v}` }),
+  reddit:      (v) => ({ label: "Open Reddit", url: v.startsWith("http") ? v : `https://reddit.com/u/${v}` }),
+  spotify:     (v) => ({ label: "Open Spotify", url: v.startsWith("http") ? v : `https://open.spotify.com/user/${v}` }),
+  twitch:      (v) => ({ label: "Open Twitch", url: v.startsWith("http") ? v : `https://twitch.tv/${v}` }),
+  steam:       (v) => ({ label: "Open Steam", url: v.startsWith("http") ? v : `https://steamcommunity.com/id/${v}` }),
+  youtube:     (v) => ({ label: "Open YouTube", url: v.startsWith("http") ? v : `https://youtube.com/@${v}` }),
+  url:         (v) => ({ label: "Open URL", url: v }),
+  domain:      (v) => ({ label: "Open Domain", url: `https://${v}` }),
+  crypto_btc:  (v) => ({ label: "View on Explorer", url: `https://blockchair.com/bitcoin/address/${v}` }),
+  crypto_eth:  (v) => ({ label: "View on Etherscan", url: `https://etherscan.io/address/${v}` }),
+  google_account: (v) => ({ label: "Open Gmail", url: `https://mail.google.com` }),
+  google_maps: (v) => ({ label: "Open in Maps", url: v.startsWith("http") ? v : `https://maps.google.com/search?q=${encodeURIComponent(v)}` }),
+  google_drive:(v) => ({ label: "Open Drive", url: v.startsWith("http") ? v : `https://drive.google.com` }),
+  email:       (v) => ({ label: "Send Email", url: `mailto:${v}` }),
+  phone:       (v) => ({ label: "Call", url: `tel:${v}` }),
+  ip_address:  (v) => ({ label: "IP Lookup", url: `https://ipinfo.io/${v}` }),
+};
+
 export default function NodePanel({ node, onExpand, onClose }) {
   if (!node) return null;
+
+  const action = node.type && TYPE_ACTIONS[node.type]
+    ? TYPE_ACTIONS[node.type](node.value)
+    : null;
 
   return (
     <div
@@ -9,7 +39,7 @@ export default function NodePanel({ node, onExpand, onClose }) {
         position: "absolute",
         bottom: 20,
         left: 20,
-        width: 280,
+        width: 290,
         background: "rgba(12,12,24,0.95)",
         border: "1px solid rgba(123,111,255,0.5)",
         borderRadius: 12,
@@ -25,7 +55,7 @@ export default function NodePanel({ node, onExpand, onClose }) {
       `}</style>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 10, color: "#7b6fff", fontFamily: "monospace", marginBottom: 4, letterSpacing: 1 }}>
             SELECTED NODE
           </div>
@@ -51,6 +81,7 @@ export default function NodePanel({ node, onExpand, onClose }) {
             fontSize: 18,
             padding: "0 4px",
             lineHeight: 1,
+            flexShrink: 0,
           }}
         >
           ×
@@ -62,11 +93,11 @@ export default function NodePanel({ node, onExpand, onClose }) {
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: 8,
-          marginBottom: 14,
+          marginBottom: 12,
         }}
       >
         {[
-          ["TYPE", node.type || "entity"],
+          ["TYPE", node.type || "unknown"],
           ["CONNECTIONS", node.connections ?? "?"],
         ].map(([label, val]) => (
           <div
@@ -86,6 +117,35 @@ export default function NodePanel({ node, onExpand, onClose }) {
           </div>
         ))}
       </div>
+
+      {/* Type-specific action button */}
+      {action && (
+        <a
+          href={action.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "block",
+            textAlign: "center",
+            background: "rgba(0,212,255,0.12)",
+            border: "1px solid rgba(0,212,255,0.35)",
+            borderRadius: 8,
+            padding: "8px 0",
+            color: "#00d4ff",
+            fontSize: 11,
+            fontFamily: "'Space Mono', monospace",
+            fontWeight: "bold",
+            cursor: "pointer",
+            textDecoration: "none",
+            marginBottom: 8,
+            transition: "opacity 0.2s",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+        >
+          🔗 {action.label}
+        </a>
+      )}
 
       <div style={{ display: "flex", gap: 8 }}>
         <button
