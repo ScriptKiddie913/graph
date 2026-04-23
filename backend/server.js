@@ -894,6 +894,13 @@ app.listen(PORT, async () => {
     }
     isSynced = true;
   }
+
+  // Keep-alive ping: prevent Render free tier from sleeping (spins down after 15 min inactivity)
+  const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  setInterval(() => {
+    axios.get(`${SELF_URL}/health`).catch(() => {});
+  }, 14 * 60 * 1000); // every 14 minutes
+  console.log(`❤️  Keep-alive ping enabled → ${SELF_URL}/health every 14 min`);
 });
 
 // Graceful shutdown
