@@ -23,6 +23,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from entity_classifier import classify
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -131,12 +133,12 @@ def records_from_values(values):
         return []
     out = []
     for val in unique:
+        entity_type = classify(val)
         links = [
-            {"type": "entity", "value": x}
-            for x in unique
-            if x != val
+            {"type": classify(x), "value": x}
+            for x in unique if x != val
         ][:MAX_LINKS_PER_NODE]
-        out.append({"type": "entity", "value": val, "links": links})
+        out.append({"type": entity_type, "value": val, "links": links})
     return out
 
 

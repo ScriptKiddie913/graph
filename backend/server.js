@@ -254,6 +254,22 @@ function splitRawLine(line) {
   return [clean];
 }
 
+function safeClassify(value) {
+  try {
+    return classifyEntity(value);
+  } catch {
+    return "unknown";
+  }
+}
+
+function isLikelyPassword(value) {
+  // Common password patterns — mixed complexity or word+digits pattern
+  return (
+    /^(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{6,}$/.test(value) ||
+    /^[a-z]{4,10}\d{2,6}[!@#$%]?$/i.test(value)
+  );
+}
+
 function processRawLine(line) {
   const parts = splitRawLine(line);
   if (!parts.length) return;
@@ -264,10 +280,15 @@ function processRawLine(line) {
   // Ensure all nodes exist
   for (const value of values) {
     addNode(value);
+    // Reclassify as "password" if unknown and matches password heuristic
+    const node = nodeMap.get(makeId(value));
+    if (node && node.type === "unknown" && isLikelyPassword(value)) {
+      node.type = "password";
+    }
   }
 
   // Use smart linker — reuse types already stored in nodeMap to avoid re-classifying
-  const getType = (v) => nodeMap.get(makeId(v))?.type || classifyEntity(v);
+  const getType = (v) => nodeMap.get(makeId(v))?.type || safeClassify(v);
   const links = buildLinksFromRow(values, getType);
   for (const link of links) {
     const fromId = makeId(link.from.value);
@@ -777,6 +798,37 @@ app.get("/stats", async (req, res) => {
 });
 
 /**
+ * GET /types
+ * Returns entity type distribution for the current graph,
+ * sorted by count descending.
+ */
+app.get("/types", async (req, res) => {
+  try {
+    if (NO_STORE_MODE) {
+      await rebuildGraphFromTelegramSnapshot();
+    }
+
+    const counts = {};
+    for (const [, node] of nodeMap) {
+      const t = node.type || "unknown";
+      counts[t] = (counts[t] || 0) + 1;
+    }
+
+    const types = Object.entries(counts)
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count);
+
+    res.json({ types, total: nodeMap.size });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Types failed" });
+  } finally {
+    if (NO_STORE_MODE) {
+      clearGraph();
+    }
+  }
+});
+
+/**
  * POST /sync
  * Force a full re-sync from Telegram.
  */
@@ -891,7 +943,7 @@ app.get("/health", (req, res) => {
 app.use(express.static(FRONTEND_DIST));
 app.get("*", (req, res, next) => {
   // Keep API routes untouched
-  if (req.path.startsWith("/graph") || req.path.startsWith("/search") || req.path.startsWith("/stats") || req.path.startsWith("/sync") || req.path.startsWith("/webhook")) {
+  if (req.path.startsWith("/graph") || req.path.startsWith("/search") || req.path.startsWith("/stats") || req.path.startsWith("/sync") || req.path.startsWith("/webhook") || req.path.startsWith("/types") || req.path.startsWith("/health")) {
     return next();
   }
   return res.sendFile(path.join(FRONTEND_DIST, "index.html"));
