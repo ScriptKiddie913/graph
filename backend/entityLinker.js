@@ -157,11 +157,7 @@ export function buildLinksFromRow(values, classifyFn) {
         ? `${a.value}~~${b.value}`
         : `${b.value}~~${a.value}`;
     if (!linksMap.has(key)) {
-      linksMap.set(key, {
-        from: anchor === a ? a : b,
-        to: anchor === a ? b : a,
-        key,
-      });
+      linksMap.set(key, { from: a, to: b, key });
     }
   };
 

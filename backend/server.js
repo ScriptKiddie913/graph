@@ -266,8 +266,9 @@ function processRawLine(line) {
     addNode(value);
   }
 
-  // Use smart linker instead of all-to-all approach
-  const links = buildLinksFromRow(values, classifyEntity);
+  // Use smart linker — reuse types already stored in nodeMap to avoid re-classifying
+  const getType = (v) => nodeMap.get(makeId(v))?.type || classifyEntity(v);
+  const links = buildLinksFromRow(values, getType);
   for (const link of links) {
     const fromId = makeId(link.from.value);
     const toId = makeId(link.to.value);

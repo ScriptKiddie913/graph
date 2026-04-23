@@ -219,7 +219,8 @@ const RULES = [
   },
   {
     type: "upi",
-    test: (v) => /^[\w.\-]+@[\w]+$/.test(v) && !v.includes(".com"),
+    // UPI handles: user@bankname — domain part has no dot and no TLD
+    test: (v) => /^[\w.\-]+@[a-zA-Z][a-zA-Z0-9]{1,50}$/.test(v),
   },
   {
     type: "paypal",
@@ -238,9 +239,13 @@ const RULES = [
   },
   {
     type: "ip_address",
-    test: (v) =>
-      /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/.test(v) ||
-      /^([a-f0-9:]+:+)+[a-f0-9]+$/i.test(v),
+    test: (v) => {
+      // IPv4 with optional CIDR
+      if (/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/.test(v)) return true;
+      // IPv6 — safe linear check: only hex digits and colons, at least 2 colons
+      const colonCount = (v.match(/:/g) || []).length;
+      return colonCount >= 2 && colonCount <= 7 && /^[0-9a-f:]{2,39}$/i.test(v);
+    },
   },
   {
     type: "device_id",
