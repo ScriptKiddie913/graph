@@ -828,6 +828,103 @@ app.get("/types", async (req, res) => {
   }
 });
 
+// Simple in-memory rate limiter for resource-intensive endpoints
+// Tracks request count per IP in a sliding 60-second window
+const rateLimitMap = new Map(); // ip → [timestamps]
+function checkRateLimit(ip, maxRequests = 5, windowMs = 60000) {
+  const now = Date.now();
+  const timestamps = (rateLimitMap.get(ip) || []).filter((t) => now - t < windowMs);
+  if (timestamps.length >= maxRequests) return false;
+  timestamps.push(now);
+  rateLimitMap.set(ip, timestamps);
+  return true;
+}
+
+/**
+ * POST /holehe
+ * Run holehe email scanner on the given email and return found sites.
+ * Body: { "email": "user@example.com" }
+ */
+app.post("/holehe", async (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  if (!checkRateLimit(ip, 5, 60000)) {
+    return res.status(429).json({ error: "Rate limit exceeded — max 5 scans per minute" });
+  }
+
+  const { email } = req.body || {};
+
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    return res.status(400).json({ error: "Missing or invalid email" });
+  }
+
+  const scriptPath = path.resolve(__dirname, "holehe_runner.py");
+  const python = TELETHON_PYTHON; // reuse python3 env var
+
+  try {
+    const { stdout, stderr } = await execFileAsync(python, [scriptPath, email.trim()], {
+      timeout: 35000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+
+    if (stderr && stderr.trim()) {
+      console.warn(`holehe_runner.py warnings: ${stderr.trim()}`);
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout || "[]");
+    } catch {
+      return res.status(500).json({ error: "Failed to parse holehe output" });
+    }
+
+    const found = Array.isArray(parsed) ? parsed : [];
+    res.json({ email, found, count: found.length });
+  } catch (err) {
+    const detail = String(err.stdout || err.stderr || err.message || "").trim();
+    res.status(500).json({ error: `holehe failed: ${detail}` });
+  }
+});
+
+/**
+ * GET /linkedin-search?name=<fullname>
+ * Search LinkedIn profiles via Google Custom Search API.
+ * Requires GOOGLE_API_KEY and GOOGLE_SEARCH_ENGINE_ID env vars.
+ */
+app.get("/linkedin-search", async (req, res) => {
+  const { name } = req.query;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: "Missing ?name= parameter" });
+  }
+
+  const apiKey = process.env.GOOGLE_API_KEY;
+  const cx = process.env.GOOGLE_SEARCH_ENGINE_ID;
+
+  if (!apiKey || !cx) {
+    return res.status(503).json({ error: "GOOGLE_API_KEY or GOOGLE_SEARCH_ENGINE_ID not configured" });
+  }
+
+  try {
+    const query = `site:linkedin.com/in "${name.trim()}"`;
+    const response = await axios.get("https://www.googleapis.com/customsearch/v1", {
+      params: { key: apiKey, cx, q: query, num: 10 },
+      timeout: 10000,
+    });
+
+    const items = response.data?.items || [];
+    const results = items.map((item) => ({
+      title: item.title || "",
+      link: item.link || "",
+      snippet: item.snippet || "",
+    }));
+
+    res.json({ name: name.trim(), results, count: results.length });
+  } catch (err) {
+    const detail = err.response?.data?.error?.message || err.message || "Unknown error";
+    res.status(500).json({ error: `LinkedIn search failed: ${detail}` });
+  }
+});
+
 /**
  * POST /sync
  * Force a full re-sync from Telegram.
@@ -941,9 +1038,10 @@ app.get("/health", (req, res) => {
 // 🌐 SERVE FRONTEND (single-service Render deployment)
 // ============================================================
 app.use(express.static(FRONTEND_DIST));
+const API_ROUTE_PREFIXES = ["/graph", "/search", "/stats", "/sync", "/webhook", "/types", "/health", "/holehe", "/linkedin-search"];
 app.get("*", (req, res, next) => {
   // Keep API routes untouched
-  if (req.path.startsWith("/graph") || req.path.startsWith("/search") || req.path.startsWith("/stats") || req.path.startsWith("/sync") || req.path.startsWith("/webhook") || req.path.startsWith("/types") || req.path.startsWith("/health")) {
+  if (API_ROUTE_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
     return next();
   }
   return res.sendFile(path.join(FRONTEND_DIST, "index.html"));
