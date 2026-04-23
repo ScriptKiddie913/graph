@@ -505,6 +505,7 @@ export default function App() {
 
       {/* ===== NODE DETAIL PANEL ===== */}
       <NodePanel
+        key={selectedNode?.id}
         node={selectedNode}
         onExpand={handleExpand}
         onClose={() => setSelectedNode(null)}
