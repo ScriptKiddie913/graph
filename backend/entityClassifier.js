@@ -66,6 +66,9 @@ export const ENTITY_TYPES = {
   // Misc
   date:           "date",
   vehicle_plate:  "vehicle_plate",
+  amount:         "amount",
+  user_id:        "user_id",
+  status:         "status",
   unknown:        "unknown",
 };
 
@@ -231,11 +234,14 @@ const RULES = [
   {
     type: "email",
     // Note: google_account rule above catches @gmail.com first
+    // EMAIL: must contain "@" and a domain with a TLD (dot in domain part)
     test: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v),
   },
   {
     type: "phone",
-    test: (v) => /^\+?[\d]{7,15}$/.test(v),
+    // PHONE: starts with "+" (country code) OR is 10–15 digits (long enough to
+    // distinguish from short numeric IDs).  NO letters allowed.
+    test: (v) => /^\+\d{7,15}$/.test(v) || /^\d{10,15}$/.test(v),
   },
   {
     type: "ip_address",
@@ -281,6 +287,18 @@ const RULES = [
       /^\d{4}-\d{2}-\d{2}$/.test(v) ||
       /^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(v),
   },
+  {
+    // NUMERIC BALANCE / AMOUNT: decimal number with fractional part
+    type: "amount",
+    test: (v) => /^\d{1,15}\.\d{1,4}$/.test(v),
+  },
+  {
+    // USER ID / INTERNAL ID: short pure-numeric value (1–9 digits), no "+"
+    // Placed after all longer numeric patterns (phone ≥10 digits, national_id ≥12,
+    // device_id ≥15) so short IDs land here rather than being mis-classified.
+    type: "user_id",
+    test: (v) => /^\d{1,9}$/.test(v),
+  },
 
   // ── Web ──────────────────────────────────────────────────────────────────
   {
@@ -293,8 +311,14 @@ const RULES = [
       /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(v) && !v.includes("/"),
   },
   {
+    // USERNAME / HANDLE: "@handle" prefix OR short word containing underscore
     type: "username",
-    test: (v) => /^@[\w.]+$/.test(v),
+    test: (v) => /^@[\w.]+$/.test(v) || /^[a-zA-Z]\w{1,23}_\w+$/.test(v),
+  },
+  {
+    // STATUS: common record-status words
+    type: "status",
+    test: (v) => /^(verified|pending|active|inactive|blocked|suspended|rejected|approved|banned)$/i.test(v),
   },
 
   // ── Name heuristic (last resort before unknown) ───────────────────────────
@@ -369,6 +393,9 @@ export const ENTITY_COLORS = {
   url:            "#74b9ff",
   domain:         "#a29bfe",
   address:        "#55efc4",
+  amount:         "#00cec9",
+  user_id:        "#b2bec3",
+  status:         "#81ecec",
   unknown:        "#7b6fff",
 };
 
@@ -401,6 +428,9 @@ export const ENTITY_ICONS = {
   domain:         "🌍",
   address:        "📍",
   coordinates:    "🗺️",
+  amount:         "💲",
+  user_id:        "🔢",
+  status:         "🏷️",
   unknown:        "⬡",
 };
 
@@ -417,10 +447,12 @@ export function getCategoryFor(type) {
     steam: "gaming", epic_games: "gaming", xbox: "gaming", playstation: "gaming",
     crypto_btc: "finance", crypto_eth: "finance", crypto_other: "finance",
     paypal: "finance", bank_account: "finance", upi: "finance",
+    amount: "finance",
     google_account: "google", google_maps: "google", google_drive: "google",
     ip_address: "network", domain: "network", url: "network",
     address: "location", city: "location", country: "location",
     coordinates: "location", postcode: "location",
+    user_id: "other", status: "other",
   };
   return map[type] || "other";
 }

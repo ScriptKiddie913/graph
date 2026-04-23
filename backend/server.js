@@ -862,7 +862,7 @@ app.post("/holehe", async (req, res) => {
 
   try {
     const { stdout, stderr } = await execFileAsync(python, [scriptPath, email.trim()], {
-      timeout: 35000,
+      timeout: 100000,
       maxBuffer: 2 * 1024 * 1024,
     });
 

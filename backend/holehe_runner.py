@@ -15,8 +15,13 @@ def run_holehe_clean(email):
             ["holehe", email, "--only-used", "--no-color"],
             capture_output=True,
             text=True,
-            timeout=25,
+            timeout=90,
         )
+
+        if proc.stdout:
+            sys.stderr.write(f"holehe stdout:\n{proc.stdout}\n")
+        if proc.stderr:
+            sys.stderr.write(f"holehe stderr:\n{proc.stderr}\n")
 
         found = []
 
@@ -30,6 +35,7 @@ def run_holehe_clean(email):
         return found
 
     except subprocess.TimeoutExpired:
+        sys.stderr.write(f"holehe timed out for {email}\n")
         return []
     except FileNotFoundError:
         # holehe not installed
