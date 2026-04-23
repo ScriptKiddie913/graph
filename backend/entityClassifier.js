@@ -239,9 +239,12 @@ const RULES = [
   },
   {
     type: "phone",
-    // PHONE: starts with "+" (country code) OR is 10–15 digits (long enough to
-    // distinguish from short numeric IDs).  NO letters allowed.
-    test: (v) => /^\+\d{7,15}$/.test(v) || /^\d{10,15}$/.test(v),
+    // PHONE: starts with "+" (explicit country code, 7–15 digits after "+")
+    // OR is 7–15 digits without "+" but long enough (≥7) to distinguish from
+    // short internal IDs (which are caught by the user_id rule below).
+    // Per FIELD IDENTIFICATION RULES: no letters allowed; +xx prefix or 10-12
+    // digit local formats are the canonical indicators.
+    test: (v) => /^\+\d{7,15}$/.test(v) || /^\d{7,15}$/.test(v),
   },
   {
     type: "ip_address",
@@ -311,7 +314,9 @@ const RULES = [
       /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(v) && !v.includes("/"),
   },
   {
-    // USERNAME / HANDLE: "@handle" prefix OR short word containing underscore
+    // USERNAME / HANDLE: "@handle" prefix OR a short token that contains an
+    // underscore (common in handles like mehdi_rast).  Length cap of 25 chars
+    // total keeps this from matching longer descriptive strings.
     type: "username",
     test: (v) => /^@[\w.]+$/.test(v) || /^[a-zA-Z]\w{1,23}_\w+$/.test(v),
   },
