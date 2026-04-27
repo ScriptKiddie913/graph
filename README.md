@@ -49,6 +49,8 @@ graph-intel/
 - Copy `.env.example` files to `.env` and set Telegram credentials:
   - `BOT_TOKEN`
   - `CHAT_ID`
+- Install Holehe to enable the email account scanner:
+  - `pip install holehe`
 
 ## Local Run Flow
 

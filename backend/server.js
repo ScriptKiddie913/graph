@@ -840,6 +840,55 @@ function checkRateLimit(ip, maxRequests = 5, windowMs = 60000) {
   return true;
 }
 
+const HOLEHE_PROVIDERS = [
+  { key: "google", aliases: ["google", "gmail"], domains: ["gmail.com", "googlemail.com"] },
+  { key: "microsoft", aliases: ["microsoft", "outlook", "hotmail", "live"], domains: ["outlook.com", "hotmail.com", "live.com", "msn.com"] },
+  { key: "yahoo", aliases: ["yahoo", "ymail", "rocketmail"], domains: ["yahoo.com", "ymail.com", "rocketmail.com"] },
+  { key: "proton", aliases: ["proton", "protonmail"], domains: ["proton.me", "protonmail.com"] },
+  { key: "icloud", aliases: ["icloud", "apple", "me"], domains: ["icloud.com", "me.com", "mac.com"] },
+];
+
+function normalizeHoleheSite(site) {
+  return String(site || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function reasonHoleheResults(email, found) {
+  const domain = String(email || "").split("@")[1]?.toLowerCase() || "";
+  const seen = new Set();
+
+  return (found || [])
+    .map((site) => {
+      const label = String(site || "").trim();
+      const normalized = normalizeHoleheSite(label);
+      if (!normalized || seen.has(normalized)) return null;
+      seen.add(normalized);
+
+      const compact = normalized.replace(/\s+/g, "");
+      const provider = HOLEHE_PROVIDERS.find((entry) =>
+        entry.aliases.some((alias) => alias === normalized || alias === compact)
+      );
+      let confidence = 0.7;
+      let reason = "Holehe reported the account as in-use";
+
+      if (provider) {
+        confidence = 0.85;
+        reason = "Matched known provider alias";
+        if (domain && provider.domains.includes(domain)) {
+          confidence = 0.97;
+          reason = "Email domain matches provider";
+        }
+      }
+
+      return { site: label, normalized, confidence, reason };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.confidence - a.confidence || a.site.localeCompare(b.site));
+}
+
 /**
  * POST /holehe
  * Run holehe email scanner on the given email and return found sites.
@@ -877,51 +926,18 @@ app.post("/holehe", async (req, res) => {
       return res.status(500).json({ error: "Failed to parse holehe output" });
     }
 
-    const found = Array.isArray(parsed) ? parsed : [];
-    res.json({ email, found, count: found.length });
+    const found = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.found) ? parsed.found : [];
+    const runnerError = typeof parsed?.error === "string" ? parsed.error : null;
+    const reasoned = reasonHoleheResults(email, found);
+
+    if (runnerError && reasoned.length === 0) {
+      return res.status(503).json({ error: runnerError });
+    }
+
+    res.json({ email, found, reasoned, count: found.length, warning: runnerError || null });
   } catch (err) {
     const detail = String(err.stdout || err.stderr || err.message || "").trim();
     res.status(500).json({ error: `holehe failed: ${detail}` });
-  }
-});
-
-/**
- * GET /linkedin-search?name=<fullname>
- * Search LinkedIn profiles via Google Custom Search API.
- * Requires GOOGLE_API_KEY and GOOGLE_SEARCH_ENGINE_ID env vars.
- */
-app.get("/linkedin-search", async (req, res) => {
-  const { name } = req.query;
-
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: "Missing ?name= parameter" });
-  }
-
-  const apiKey = process.env.GOOGLE_API_KEY;
-  const cx = process.env.GOOGLE_SEARCH_ENGINE_ID;
-
-  if (!apiKey || !cx) {
-    return res.status(503).json({ error: "GOOGLE_API_KEY or GOOGLE_SEARCH_ENGINE_ID not configured" });
-  }
-
-  try {
-    const query = `site:linkedin.com/in "${name.trim()}"`;
-    const response = await axios.get("https://www.googleapis.com/customsearch/v1", {
-      params: { key: apiKey, cx, q: query, num: 10 },
-      timeout: 10000,
-    });
-
-    const items = response.data?.items || [];
-    const results = items.map((item) => ({
-      title: item.title || "",
-      link: item.link || "",
-      snippet: item.snippet || "",
-    }));
-
-    res.json({ name: name.trim(), results, count: results.length });
-  } catch (err) {
-    const detail = err.response?.data?.error?.message || err.message || "Unknown error";
-    res.status(500).json({ error: `LinkedIn search failed: ${detail}` });
   }
 });
 
@@ -1038,7 +1054,7 @@ app.get("/health", (req, res) => {
 // 🌐 SERVE FRONTEND (single-service Render deployment)
 // ============================================================
 app.use(express.static(FRONTEND_DIST));
-const API_ROUTE_PREFIXES = ["/graph", "/search", "/stats", "/sync", "/webhook", "/types", "/health", "/holehe", "/linkedin-search"];
+const API_ROUTE_PREFIXES = ["/graph", "/search", "/stats", "/sync", "/webhook", "/types", "/health", "/holehe"];
 app.get("*", (req, res, next) => {
   // Keep API routes untouched
   if (API_ROUTE_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
