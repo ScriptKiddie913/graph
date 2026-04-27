@@ -926,7 +926,12 @@ app.post("/holehe", async (req, res) => {
       return res.status(500).json({ error: "Failed to parse holehe output" });
     }
 
-    const found = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.found) ? parsed.found : [];
+    let found = [];
+    if (Array.isArray(parsed)) {
+      found = parsed;
+    } else if (Array.isArray(parsed?.found)) {
+      found = parsed.found;
+    }
     const runnerError = typeof parsed?.error === "string" ? parsed.error : null;
     const reasoned = reasonHoleheResults(email, found);
 

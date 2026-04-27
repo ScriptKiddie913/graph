@@ -22,6 +22,7 @@ def _run_holehe_command(args):
             timeout=90,
         )
     except FileNotFoundError:
+        # args are ["holehe", <email>, ...] so we reuse the remaining arguments with python -m holehe.
         return subprocess.run(
             [sys.executable, "-m", "holehe", *args[1:]],
             capture_output=True,
@@ -38,6 +39,7 @@ def _extract_sites(output):
         if not line or not line.startswith("[+]"):
             continue
         site = line.replace("[+]", "", 1).strip()
+        # Split on " - ", " : ", or multiple spaces (holehe often appends status text).
         site = re.split(r"\s+-\s+|\s+:\s+|\s{2,}", site, 1)[0].strip()
         site = re.sub(r"\s+\(.*\)$", "", site).strip()
         site = re.sub(r"\s+", " ", site).strip()
